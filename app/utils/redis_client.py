@@ -1,0 +1,6 @@
+# redis_client.py
+from redis import Redis
+from config import get_settings
+
+settings = get_settings()
+redis_client = Redis.from_url(settings.redis_url, decode_responses=True)

@@ -1,0 +1,14 @@
+# dotenv
+.env
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Virtual environment
+venv/
+__pycache__/
+*.pyc
+.envrc
+
+# VS Code settings
+.vscode/
