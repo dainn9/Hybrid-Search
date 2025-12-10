@@ -10,7 +10,9 @@ from utils.utils import (
     build_bm25_corpus,
     build_bm25_local,
     clean_text_for_query,
-    removed_puncts
+    clean_text_for_cross_encoder,
+    removed_puncts,
+    format_hybrid_results_json
 )
 
 # --- Logging ---
@@ -19,10 +21,12 @@ logger = logging.getLogger("HybridSearchAPI")
 class HybridEngine:
     def __init__(self, collection_name,
                  bm25_cache_file="cache/bm25_global.pkl"):
-        # Init Milvus + embedding model
-        self.collection, self.model = init_milvus_and_model(settings.uri_milvus, 
-                                                            settings.api_key_milvus, 
-                                                            collection_name)
+        # Init Milvus + embedding model + cross-encoder
+        self.collection, self.embedding_model, self.cross_encoder = init_milvus_and_model(settings.uri_milvus, 
+                                                                                settings.api_key_milvus, 
+                                                                                collection_name, 
+                                                                                settings.embedding_model_name,
+                                                                                settings.cross_encoder_model_name)
         # Build / load global BM25 corpus (for queries without city filter)
         self.all_docs, self.bm25_corpus_full = build_bm25_corpus(
             self.collection, cache_file=bm25_cache_file
@@ -43,7 +47,12 @@ class HybridEngine:
             "sa pa": "Sa Pa",
             "sapa": "Sa Pa",
             "huế": "Huế",
-            "vũng tàu": "Vũng Tàu"
+            "vũng tàu": "Vũng Tàu",
+            "cà mau": "Cà Mau",
+            "cần thơ": "Cần Thơ",
+            "quy nhơn": "Quy Nhơn",
+            "phan thiết": "Phan Thiết",
+            "mũi né": "Mũi Né",
         }
 
     # --- City detection ---
@@ -103,12 +112,12 @@ class HybridEngine:
         return semantic_query, expr, bm25_scores, filtered_results
 
     # --- Hybrid search ---
-    def hybrid_search(self, query: str, alpha: float = None, top_k: int = 10, debug: bool = False):
+    def hybrid_search(self, query: str, alpha: float = None, top_k1: int = 50, top_k2: int = 20, top_k3: int = 10, debug: bool = False):
         if alpha is None:
             alpha = settings.alpha
 
         # Redis cache
-        cache_key = f"search:{query}:{top_k}:{alpha}"
+        cache_key = f"search:{query}:{top_k1}:{top_k2}:{top_k3}:{alpha}"
         cached = redis_client.get(cache_key)
         if cached:
             logger.info(f"Cache hit for key={cache_key}")
@@ -123,13 +132,13 @@ class HybridEngine:
         bm25_dict = {r["HotelID"]: score for r, score in zip(filtered_results, bm25_scores)}
 
         # Dense search
-        query_emb = self.model.encode([semantic_query], normalize_embeddings=True)
+        query_emb = self.embedding_model.encode([semantic_query], normalize_embeddings=True)
         search_params = search_params = {"metric_type": "COSINE", "params": {"ef": 64}}
         results = self.collection.search(
             data=query_emb,
             anns_field="TextForEmbedding",
             param=search_params,
-            limit=top_k,
+            limit=top_k1,
             expr=expr,
             output_fields=["HotelID", "Description", "Location"],
         )
@@ -143,27 +152,40 @@ class HybridEngine:
                 bm25_score = bm25_dict.get(hotel_id, 0)
                 final_score = alpha * dense_score + (1 - alpha) * bm25_score
                 hits.append({
-                    "doc_id": hotel_id,
-                    # "title": hit.entity.get("Description", "Unknown"),
-                    # "location": hit.entity.get("Location", ""),
+                    "HotelID": hotel_id,
+                    "Description": hit.entity.get("Description", ""),
+                    "Location": hit.entity.get("Location", ""),
                     "score": final_score
                 })
                 if debug:
                     hits[-1]["dense_score"] = dense_score
                     hits[-1]["bm25_score"] = bm25_score
 
-         # Sort top_k
-        hits = sorted(hits, key=lambda x: x["score"], reverse=True)[:top_k]
+        # Sort top_k2
+        top_docs = sorted(hits, key=lambda x: x["score"], reverse=True)[:top_k2] 
 
+        # Re-rank with cross-encoder
+        # Chuẩn bị cross-encoder input
+        candidates = [clean_text_for_cross_encoder(doc['Description']) for doc in top_docs]
+        query_cleaned_for_cross = clean_text_for_cross_encoder(query)
+        cross_inputs = [[query_cleaned_for_cross, doc_text] for doc_text in candidates]
+
+        # rerank all
+        cross_scores = self.cross_encoder.predict(cross_inputs)
+        
+        sorted_idx = cross_scores.argsort()[::-1]
+        reranked_docs = [top_docs[i] for i in sorted_idx[:top_k3]]
+
+        response = format_hybrid_results_json(reranked_docs, query=query, top_k=top_k3)
+        
         # Cache 24h
-        redis_client.setex(cache_key, 86400, json.dumps(hits))
-
-        return hits
+        redis_client.setex(cache_key, 86400, json.dumps(response, ensure_ascii=False, indent=2))
+        
+        return response
 
 # --- Usage example ---
 if __name__ == "__main__":
     engine = HybridEngine(collection_name=settings.collection_name)
     query = "Khách sạn Phú Quốc gần biển"
-    results = engine.hybrid_search(query, top_k=10)
-    df = pd.DataFrame(results)
-    print(df.head())
+    results = engine.hybrid_search(query)
+    print(results)

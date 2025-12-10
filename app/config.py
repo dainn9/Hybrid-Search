@@ -8,11 +8,14 @@ class Settings(BaseSettings):
     uri_milvus: str = ""
     api_key_milvus: str = ""
     redis_url: str = ""
-    alpha: float = 0.2
-    default_top_k: int = 10
+    alpha: float = 0.5
+    default_top_k1: int = 50
+    default_top_k2: int = 20
+    default_top_k3: int = 10
     collection_name: str = "hotels_collection_mpnet_base_v2"
-    model_name: str = "paraphrase-multilingual-mpnet-base-v2"
+    embedding_model_name: str = "paraphrase-multilingual-mpnet-base-v2"
     max_query_length: int = 50
+    cross_encoder_model_name: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
     class Config:
         env_file = ".env"

@@ -1,13 +1,15 @@
 # app.py
-import redis
 import logging
 from slowapi import Limiter
 from slowapi.util import get_remote_address
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import FastAPI, Query, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import pandas as pd
 from utils.redis_client import redis_client, settings
+from fastapi.responses import JSONResponse
+from slowapi.errors import RateLimitExceeded
+from utils.utils import make_api_response
+
 
 from search.hybrid_engine import HybridEngine
 
@@ -19,7 +21,10 @@ logger = logging.getLogger("HybridSearchAPI")
 limiter = Limiter(key_func=get_remote_address)
 
 # --- Init FastAPI ---
-app = FastAPI(title="Hotel Hybrid Search API")
+app = FastAPI(title="Hotel Hybrid Search API",
+              version="1.0",
+              description="API for hybrid search over hotel data using Milvus and Redis.")
+
 app.state.limiter = limiter
 
 
@@ -44,22 +49,22 @@ def get_engine():
 @app.get("/search")
 @limiter.limit("10/minute")  # max 10 request / phút / IP
 def search_endpoint(
-    Request, request,
-    query: str = Query(...,min_length=1,max_length=50, description="Search query text"),
+    request: Request,
+    query: str = Query(...,min_length=1,max_length=500, description="Search query text"),
     top_k: int = Query(10, description="Number of top results"),
-    # alpha: float = Query(None, description="Fusion weight dense vs BM25")
 ):
     if len(query) > settings.max_query_length:
         raise HTTPException(status_code=400, detail="Query too long")
 
     engine = get_engine()
     logger.info(f"GET /search query={query}, top_k={top_k}")
-    results = engine.hybrid_search(query=query, top_k=top_k)
-    return {"query": query, "top_k": top_k,"results": results}
+    results = engine.hybrid_search(query=query, top_k3=top_k)
+    return results
 
 # --- Health check endpoint ---
 @app.get("/health")
-def health_check():
+@limiter.limit("1/minute")  # max 1 request / phút / IP
+def health_check(request: Request):
     try:
         engine = get_engine()
         redis_client.ping()
@@ -69,6 +74,24 @@ def health_check():
         logger.error(f"Health check failed: {e}")
         return {"status": "error", "message": str(e)}
 
+
+# --- Exception handler for rate limiting ---
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
+    return JSONResponse(
+        status_code=429,
+        content= make_api_response(
+            status=429,
+            message="Too many requests - Please slow down.",
+            extra={
+                "retry_after_seconds": 60,
+                "path": request.url.path
+            }
+        )
+    )
+
 # --- Run server ---
 if __name__ == "__main__":
-    uvicorn.run("app:app", host="0.0.0.0", port=8009, reload=True)
+    print("Swagger UI available at http://127.0.0.1:8009/docs")
+    uvicorn.run("app:app", host="127.0.0.1", port=8009, reload=True)
+
