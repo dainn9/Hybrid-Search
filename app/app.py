@@ -9,6 +9,7 @@ from utils.redis_client import redis_client, settings
 from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from utils.utils import make_api_response
+from fastapi.concurrency import run_in_threadpool
 
 
 from search.hybrid_engine import HybridEngine
@@ -48,7 +49,7 @@ def get_engine():
 # --- Search endpoint ---
 @app.get("/search")
 @limiter.limit("10/minute")  # max 10 request / phút / IP
-def search_endpoint(
+async def search_endpoint(
     request: Request,
     query: str = Query(...,min_length=1,max_length=500, description="Search query text"),
     top_k: int = Query(10, description="Number of top results"),
@@ -58,7 +59,9 @@ def search_endpoint(
 
     engine = get_engine()
     logger.info(f"GET /search query={query}, top_k={top_k}")
-    results = engine.hybrid_search(query=query, top_k3=top_k)
+
+    results = await run_in_threadpool(engine.hybrid_search, query=query, top_k3=top_k)
+
     return results
 
 # --- Health check endpoint ---

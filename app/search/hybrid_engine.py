@@ -113,6 +113,10 @@ class HybridEngine:
 
     # --- Hybrid search ---
     def hybrid_search(self, query: str, alpha: float = None, top_k1: int = 50, top_k2: int = 20, top_k3: int = 10, debug: bool = False):
+
+        if debug:
+            print(f"\033[91m[🔥 HYBRID DEBUG] query='{query}', top_k1={top_k1}, top_k2={top_k2}, top_k3={top_k3}, alpha={alpha}\033[0m")
+
         if alpha is None:
             alpha = settings.alpha
 
@@ -176,7 +180,7 @@ class HybridEngine:
         sorted_idx = cross_scores.argsort()[::-1]
         reranked_docs = [top_docs[i] for i in sorted_idx[:top_k3]]
 
-        response = format_hybrid_results_json(reranked_docs, query=query, top_k=top_k3)
+        response = format_hybrid_results_json(reranked_docs, query=query, top_k=top_k3, debug=debug)
         
         # Cache 24h
         redis_client.setex(cache_key, 86400, json.dumps(response, ensure_ascii=False, indent=2))
