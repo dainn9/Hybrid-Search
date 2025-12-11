@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from slowapi.errors import RateLimitExceeded
 from utils.utils import make_api_response
 from fastapi.concurrency import run_in_threadpool
+from contextlib import asynccontextmanager
 
 
 from search.hybrid_engine import HybridEngine
@@ -21,13 +22,28 @@ logger = logging.getLogger("HybridSearchAPI")
 # --- Rate Limiter ---
 limiter = Limiter(key_func=get_remote_address)
 
+engine = None
+# --- Init HybridEngine ---
+def get_engine():
+    global engine
+    if engine is None:
+        engine = HybridEngine(collection_name=settings.collection_name)
+    return engine
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    get_engine()
+    logger.info("HybridEngine initialized on startup.")
+    yield
+    logger.info("HybridEngine shutting down.")
+
 # --- Init FastAPI ---
 app = FastAPI(title="Hotel Hybrid Search API",
               version="1.0",
-              description="API for hybrid search over hotel data using Milvus and Redis.")
+              description="API for hybrid search over hotel data using Milvus and Redis.",
+              lifespan=lifespan)
 
 app.state.limiter = limiter
-
 
 # Allow CORS for all origins (frontend)
 app.add_middleware(
@@ -37,14 +53,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-engine = None
-# --- Init HybridEngine ---
-def get_engine():
-    global engine
-    if engine is None:
-        engine = HybridEngine(collection_name=settings.collection_name)
-    return engine
 
 # --- Search endpoint ---
 @app.get("/search")
@@ -57,7 +65,6 @@ async def search_endpoint(
     if len(query) > settings.max_query_length:
         raise HTTPException(status_code=400, detail="Query too long")
 
-    engine = get_engine()
     logger.info(f"GET /search query={query}, top_k={top_k}")
 
     results = await run_in_threadpool(engine.hybrid_search, query=query, top_k3=top_k)
@@ -69,7 +76,6 @@ async def search_endpoint(
 @limiter.limit("1/minute")  # max 1 request / phút / IP
 def health_check(request: Request):
     try:
-        engine = get_engine()
         redis_client.ping()
         test_docs = engine.collection.query(expr="", limit=1)
         return {"status": "ok", "docs_count": len(test_docs)}
