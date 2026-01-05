@@ -187,9 +187,9 @@ class HybridEngine:
         
         return response
 
-# --- Usage example ---
-if __name__ == "__main__":
-    engine = HybridEngine(collection_name=settings.collection_name)
-    query = "Khách sạn Phú Quốc gần biển"
-    results = engine.hybrid_search(query)
-    print(results)
+# # --- Usage example ---
+# if __name__ == "__main__":
+#     engine = HybridEngine(collection_name=settings.collection_name)
+#     query = "Khách sạn Phú Quốc gần biển"
+#     results = engine.hybrid_search(query)
+#     print(results)

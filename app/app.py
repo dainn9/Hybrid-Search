@@ -100,7 +100,7 @@ async def rate_limit_handler(request: Request, exc: RateLimitExceeded):
     )
 
 # --- Run server ---
-if __name__ == "__main__":
-    print("Swagger UI available at http://127.0.0.1:8009/docs")
-    uvicorn.run("app:app", host="127.0.0.1", port=8009, reload=True)
+# if __name__ == "__main__":
+#     print("Swagger UI available at http://127.0.0.1:8009/docs")
+#     uvicorn.run("app:app", host="127.0.0.1", port=8009, reload=True)
 
